@@ -1,0 +1,1 @@
+../cpp/build/broker --broker-ip=localhost:50056 --silo-ip=ip.txt

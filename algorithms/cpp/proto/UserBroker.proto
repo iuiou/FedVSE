@@ -1,0 +1,21 @@
+syntax = "proto3";
+import "google/protobuf/empty.proto";
+
+package userbroker;
+
+service UserBroker {
+    rpc requestKNN(knnQuery) returns (google.protobuf.Empty) {}
+
+    rpc requestComm(google.protobuf.Empty) returns (rpcComm) {}
+}
+
+message knnQuery {
+    repeated float data = 1;
+    int32 k = 2;
+    string condition = 3;
+    int32 qid = 4;
+}
+
+message rpcComm {
+    int64 rpcDataNum = 1;
+}

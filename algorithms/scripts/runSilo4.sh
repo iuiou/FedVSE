@@ -1,0 +1,1 @@
+../cpp/build/silo --ip=localhost:50054 --id=4 --data-path=/home/dataset/testHybrid/YouTube-audio/YouTube_4.fivecs --scalardata-path=/home/dataset/testHybrid/YouTube-audio/meta_4.txt --cluster-path=/home/dataset/testHybrid/YouTube-audio/YouTube_4.cluster/cluster --index-type=HNSW --collection-name=LOCAL_DATA4

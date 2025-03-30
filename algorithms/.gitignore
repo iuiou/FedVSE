@@ -1,0 +1,8 @@
+milvus-sdk-cpp/
+milvusServer/
+PGM-index/
+testAlgorithm/
+.vscode/
+data/
+build/
+cpp/build/

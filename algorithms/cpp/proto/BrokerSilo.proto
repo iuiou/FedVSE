@@ -1,0 +1,61 @@
+syntax = "proto3";
+import "google/protobuf/empty.proto";
+
+package brokersilo;
+
+service BrokerSilo {
+    // 获取Diffie-Hellman密钥交换的参数 
+    rpc GetParams(google.protobuf.Empty) returns (DiffieHellmanParams);  
+
+    // 获取Diffie-Hellman密钥交换的随机数r^g%p的结果
+    rpc GetRandom(DiffieHellmanRg) returns (DiffieHellmanRg);
+
+    //send knn query, evaluate the local k_i
+    rpc evaluateK(knnQuery) returns (EncryptData);
+
+    //send limit k, return interval info
+    rpc requestInterval(EncryptData) returns (EncryptData);
+    
+    //send max range, return (dis, silo id)
+    rpc sendRange(EncryptData) returns (EncryptData);
+
+    //send number
+    rpc sendNumber(Number) returns (google.protobuf.Empty);
+
+    //send answers to user
+    rpc getAns(google.protobuf.Empty) returns (stream Vector);
+}
+
+message DiffieHellmanParams {  
+    uint64 p = 1;  // 大质数  
+    uint64 g = 2;  // 生成元  
+}
+
+message DiffieHellmanRg {
+    uint64 rg_mod_p = 1;  // 随机数的g次方取模结果  
+}
+
+message knnQuery {
+    repeated float data = 1;
+    int32 k = 2;
+    string condition = 3;
+    int32 qid = 4;
+}
+
+message EncryptData {
+    bytes data = 1;
+}
+
+message Number {
+    int32 num = 1;
+}
+
+message Vector {
+    int32 id = 1;
+    repeated float data = 2;
+    string attribute = 3;
+    float distance = 4;
+}
+
+
+
