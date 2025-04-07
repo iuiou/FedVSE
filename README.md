@@ -2,7 +2,7 @@
 
 **This repository aims to provide a prototype system for our system FedVSE, which serves as a privacy-preserving and efficient vector search engine for federated databases**
 
-More technical details of our vector search engine's core algorithms are available in our repository and please refer to [technical_report.pdf](https://github.com/iuiou/FedVSE/technical_report.pdf).
+More technical details of our vector search engine's core algorithms are available in our repository and please refer to [technical_report.pdf](https://github.com/iuiou/FedVSE/blob/master/technical_report.pdf).
 
 # Environment
 
@@ -201,4 +201,4 @@ Now, you can re-compile and run the program. Notice that, you need to ensure tha
 
 # Compile and run our systems
 
-This system has pending software copyright and patent applications. The full-stack codebase will be publicly released upon approval. Currently, the core algorithms' source code and partial frontend code are open-sourced. For complete technical implementation details, please refer to our technical_report: [technical_report.pdf](https://github.com/iuiou/FedVSE/technical_report.pdf).
+This system has pending software copyright and patent applications. The full-stack codebase will be publicly released upon approval. Currently, the core algorithms' source code and partial frontend code are open-sourced. For complete technical implementation details, please refer to our technical_report: [technical_report.pdf](https://github.com/iuiou/FedVSE/blob/master/technical_report.pdf).
