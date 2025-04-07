@@ -10,7 +10,7 @@ OS: Ubuntu 20.04 LTS
 GCC/G++: >= 8.4.0  
 CMake: >= 3.19.1  
 Docker: >=19.03  
-Docker Compose: >=1.29.2 
+Docker Compose: >=1.29.2   
 [gRPC](https://grpc.io/): >= 1.66.0  
 [Milvus](https://milvus.io/): >= 2.5.2  
 [Boost C++ library](https://www.boost.org/): >= 1.85.0  
