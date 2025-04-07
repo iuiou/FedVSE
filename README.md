@@ -2,15 +2,19 @@
 
 **This repository aims to provide a prototype system for our system FedVSE, which serve as a privacy-preserving and efficient vector search engine for federated databases**
 
-Details of our engine's algorithms is available in our repository and please refer to [FedVSE_fullpaper.pdf](https://github.com/iuiou/FedVSE/blob/master/FedVSE_fullpaper.pdf).
+More technical details of our vector search engine's core algorithms are available in our repository and please refer to [full_research_paper.pdf](https://github.com/iuiou/FedVSE/blob/master/FedVSE_technical_report.pdf).
 
 # Environment
 
-OS: Ubuntu 20.04 LTS
-GCC/G++: >= 8.4.0, CMake: >= 3.19.1
-Docker: >=19.03, Docker Compose: >=1.29.2 
-[gRPC](https://grpc.io/): >= 1.66.0 [Milvus](https://milvus.io/): >= 2.5.2
-[Boost C++ library](https://www.boost.org/): >= 1.85.0, RAM: >=4GB (8GB recommended)
+OS: Ubuntu 20.04 LTS  
+GCC/G++: >= 8.4.0  
+CMake: >= 3.19.1  
+Docker: >=19.03  
+Docker Compose: >=1.29.2 
+[gRPC](https://grpc.io/): >= 1.66.0  
+[Milvus](https://milvus.io/): >= 2.5.2  
+[Boost C++ library](https://www.boost.org/): >= 1.85.0  
+RAM: >=8GB
 
 # Third Party Requirement and Installment
 
@@ -143,7 +147,58 @@ cd boost_1_85_0
 ./bootstrap.sh --prefix=$MY_INSTALL_DIR
 ./b2 install
 ```
+## Intel SGX
 
-## Compile and run our systems
+You also need to install the SDK and PSW for Intel SGX. The installation follows the guideline [Intel_SGX_SW_Installation_Guide_for_Linux.pdf](https://download.01.org/intel-sgx/latest/linux-latest/docs).
 
-This system has pending software copyright and patent applications. The full-stack codebase (frontend + backend) will be publicly released upon approval. Currently, only the core algorithm's source code and partial frontend code is open-sourced. For complete technical implementation details, please refer to our full paper: [FedVSE_fullpaper.pdf](https://github.com/iuiou/FedVSE/blob/master/FedVSE_fullpaper.pdf).
+### I. Install Dependency
+
+By executing the following commands, you can instal the dependencies first:
+```
+sudo apt-get install build-essential ocaml automake autoconf libtool wget python3 python-is-python3 libssl-dev dkms
+sudo update-alternatives --install /usr/bin/python python /usr/bin/python3 1
+```
+
+### II. Install Intel SGX SDK
+
+By executing the following commands, you can install Intel SGX SDK:
+```
+echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu focal main' | sudo tee /etc/apt/sources.list.d/intel-sgx.list
+wget -qO - https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | sudo apt-key add
+sudo apt-get update
+sudo apt-get install libsgx-epid libsgx-quote-ex libsgx-dcap-ql
+sudo apt-get install libsgx-urts libsgx-launch libsgx-enclave-common
+sudo apt-get install libsgx-urts-dbgsym libsgx-enclave-common-dbgsym libsgx-dcap-ql-dbgsym libsgx-dcap-default-qpl-dbgsym
+```
+
+### III. Install Intel SGX PSW
+
+By executing the following commands, you can install Intel SGX PSW:
+```
+wget https://download.01.org/intel-sgx/latest/linux-latest/distro/ubuntu20.04-server/sgx_linux_x64_sdk_2.25.100.3.bin
+chmod +x sgx_linux_x64_sdk_2.25.100.3.bin
+./sgx_linux_x64_sdk_2.25.100.3.bin 
+sudo apt-get install libsgx-enclave-common-dev libsgx-dcap-ql-dev libsgx-dcap-default-qpl-dev tee-appraisal-tool
+```
+In the third step, select ``NO`` and then input ``/opt/intel``.
+
+### IV. Compile the source with Intel SGX (**Simulation Mode**)
+
+By replacing the line of ``cmake ......`` with the following line in ``bash/compile.sh``, you can enable the SGX-based PSI protocol:
+```
+cmake -DUSE_SGX_PSI=ON -DSGX_HW=OFF ..
+source /opt/intel/sgxsdk/environment
+```
+Now, you can re-compile and run the program.
+
+### V. Compile the source with Intel SGX (**Hardware Mode**)
+
+By replacing the line of ``cmake ..`` with the following line in ``bash/compile.sh``, you can enable the SGX-based PSI protocol:
+```
+cmake -DUSE_SGX_PSI=ON -DSGX_HW=ON ..
+```
+Now, you can re-compile and run the program. Notice that, you need to ensure that your server supports the hardware of Intel SGX. Otherwise, you can only use the **simulation mode**.
+
+# Compile and run our systems
+
+This system has pending software copyright and patent applications. The full-stack codebase will be publicly released upon approval. Currently, the core algorithms' source code and partial frontend code are open-sourced. For complete technical implementation details, please refer to our full research paper: [full_research_paper.pdf](https://github.com/iuiou/FedVSE/blob/master/FedVSE_technical_report.pdf).
