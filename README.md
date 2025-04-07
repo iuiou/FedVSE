@@ -2,7 +2,7 @@
 
 **This repository aims to provide a prototype system for our system FedVSE, which serve as a privacy-preserving and efficient vector search engine for federated databases**
 
-More technical details of our vector search engine's core algorithms are available in our repository and please refer to [full_research_paper.pdf](https://github.com/iuiou/FedVSE/blob/master/FedVSE_technical_report.pdf).
+More technical details of our vector search engine's core algorithms are available in our repository and please refer to [full_research_paper.pdf](https://github.com/iuiou/FedVSE/blob/master/technical_report.pdf).
 
 # Environment
 
@@ -14,7 +14,7 @@ Docker Compose: >=1.29.2
 [gRPC](https://grpc.io/): >= 1.66.0  
 [Milvus](https://milvus.io/): >= 2.5.2  
 [Boost C++ library](https://www.boost.org/): >= 1.85.0  
-RAM: >=8GB
+RAM: >= 8GB
 
 # Third Party Requirement and Installment
 
@@ -201,4 +201,4 @@ Now, you can re-compile and run the program. Notice that, you need to ensure tha
 
 # Compile and run our systems
 
-This system has pending software copyright and patent applications. The full-stack codebase will be publicly released upon approval. Currently, the core algorithms' source code and partial frontend code are open-sourced. For complete technical implementation details, please refer to our full research paper: [full_research_paper.pdf](https://github.com/iuiou/FedVSE/blob/master/FedVSE_technical_report.pdf).
+This system has pending software copyright and patent applications. The full-stack codebase will be publicly released upon approval. Currently, the core algorithms' source code and partial frontend code are open-sourced. For complete technical implementation details, please refer to our full research paper: [full_research_paper.pdf](https://github.com/iuiou/FedVSE/blob/master/technical_report.pdf).
