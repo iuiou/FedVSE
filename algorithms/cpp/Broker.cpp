@@ -49,6 +49,13 @@ using brokersilo::Number;
 using userbroker::UserBroker;
 using userbroker::rpcComm;
 
+// #define USE_TRUSTED_BROKER
+// #define USE_INTEL_SGX
+
+#ifdef USE_INTEL_SGX
+#include "sgx/mpc/SgxMpc.h"
+#endif
+
 struct boundary {
     float bound;
     size_t l_numbouns;
@@ -255,7 +262,17 @@ class UserBrokerImpl final : public UserBroker::Service {
                                 grpc::InsecureChannelCredentials(), args), i, url);
             }
             m_logger.Init();
+
+            #ifdef USE_INTEL_SGX
+            SgxInitEnclave();
+            #endif
         }   
+
+        #ifdef USE_INTEL_SGX
+        ~UserBrokerImpl() {
+            SgxFreeEnclave();
+        }
+        #endif
 
         static void exchangeParamsThread(UserBrokerImpl *impl, const size_t siloId) {
             std::lock_guard<std::mutex> lock(impl->dataMutex);
@@ -350,11 +367,23 @@ class UserBrokerImpl final : public UserBroker::Service {
             parallelExchangeKey();
         }
 
-        void analyizeContribution(std::map<size_t, std::vector<unsigned char>> &aes_key,
+        void analyzeContribution(std::map<size_t, std::vector<unsigned char>> &aes_key,
             std::map<size_t, std::vector<unsigned char>> &aes_iv, const VectorDataType &queryV,
             const size_t queryK, const std::string &condition, std::vector<size_t> &ans) {
             databack.clear();
             parallelGetContribution(queryV, queryK, condition);
+            
+            #ifdef USE_INTEL_SGX
+            for(size_t i = 0;i < siloNum;i++) {
+                SgxClearInfo(i);
+                std::vector<unsigned char> dat = StringToUnsignedVector(databack[i].data());
+                SgxImportInfo(i, 1, dat.size(), queryK, aes_key[i].data(), aes_iv[i].data(), dat.data());
+            }
+            SgxJointEstimation(siloNum, queryK);
+            ans.resize(siloNum);
+            #endif
+
+            #ifdef USE_TRUSTED_BROKER
             AES aes(AESKeyLength::AES_128);
             std::vector<float> contributions(siloNum);
             float minC = FLOAT_INF, maxC = 0;
@@ -367,29 +396,24 @@ class UserBrokerImpl final : public UserBroker::Service {
                 contributions[i] = contri;
             }
             ans.resize(siloNum);
-            if(localSearchOption == 1) {
+            if(localSearchOption == 1) { // do not prune
                 for(int i = 0;i < siloNum;i++) {
                     ans[i] = queryK;
                 }
-            } else if(localSearchOption == 2) {
-                for(int i = 0;i < siloNum;i++) {
-                    int nowK = (int)std::ceil(1.0 * contributions[i] / maxC * queryK);
-                    nowK = std::max(nowK, 1);
-                    ans[i] = (size_t)nowK;
-                }
-            } else {
+            } else { // build clusters and evaluate
                 for(int i = 0;i < siloNum;i++) {
                     int nowK = (int)std::ceil(1.0 * minC / contributions[i] * queryK);
                     nowK = std::max(nowK, 1);
                     ans[i] = (size_t)nowK;
                 }
             }
+            #endif
             return;
         }
 
         void analyzeIntervalBase(std::map<size_t, std::vector<unsigned char>> &aes_key,
             std::map<size_t, std::vector<unsigned char>> &aes_iv, const std::map<size_t, EncryptData> &kCiperTextMp, const int queryK) {
-            std::cout << "analyize intervals with basic method" << std::endl;
+            std::cout << "analyze intervals with basic method" << std::endl;
             eachBucketSet.clear();
             databack.clear();
             // m_logger.SetStartTimer();
@@ -428,7 +452,7 @@ class UserBrokerImpl final : public UserBroker::Service {
 
         void analyzeIntervalOpt(std::map<size_t, std::vector<unsigned char>> &aes_key,
             std::map<size_t, std::vector<unsigned char>> &aes_iv, const std::map<size_t, EncryptData> &kCiperTextMp, const int queryK) {
-            std::cout << "analyize intervals with priority queue" << std::endl;
+            std::cout << "analyze intervals with priority queue" << std::endl;
             optBucketSet.clear();
             databack.clear();
             parallelGetInterval(kCiperTextMp);
@@ -451,121 +475,7 @@ class UserBrokerImpl final : public UserBroker::Service {
             }
         }
 
-        void analyzeInterval(std::map<size_t, std::vector<unsigned char>> &aes_key,
-            std::map<size_t, std::vector<unsigned char>> &aes_iv, const std::map<size_t, EncryptData> &kCiperTextMp, const int queryK) {
-            std::cout << "analyize intervals with intervals merged" << std::endl;
-            bucketSet.clear();
-            databack.clear();
-            // m_logger.SetStartTimer();
-            parallelGetInterval(kCiperTextMp);
-            // m_logger.SetEndTimer();
-            // std::cout << "get interval takes " << m_logger.GetDurationTime() / 1000 << "s" << std::endl;
-
-            AES aes(AESKeyLength::AES_128);
-            std::vector<boundary> boundarySet;
-            for(size_t i = 0;i < siloNum;i++) {
-                EncryptData data = databack[i];
-                std::vector<unsigned char> plainText = aes.DecryptCBC(StringToUnsignedVector(data.data()), aes_key.at(i), aes_iv.at(i));
-                size_t k = (size_t)UnsignedVectorToInt32(std::vector<unsigned char>(plainText.begin(), plainText.begin() + 4));
-                size_t bucketSize = (size_t)std::ceil(std::sqrt(queryK));
-                int num = (k + bucketSize - 1) / bucketSize;
-                if(num == 1) {
-                    float bound = UnsignedVectorToFloat(std::vector<unsigned char>(plainText.begin() + 4, plainText.begin() + 8));
-                    boundarySet.emplace_back((boundary){bound, 1, k});
-                } else {
-                    for(int j = 0;j < num;j++) {
-                        float bound = UnsignedVectorToFloat(std::vector<unsigned char>(plainText.begin() + 4 + 4 * j, plainText.begin() + 8 + 4 * j));
-                        if(j == 0) {
-                            boundarySet.emplace_back((boundary){bound, 1, bucketSize});
-                        } else if(j == num - 1) {
-                            boundarySet.emplace_back((boundary){bound, bucketSize, k - (bucketSize) * j});
-                        } else {
-                            boundarySet.emplace_back((boundary){bound, bucketSize, bucketSize});
-                        }
-                    }
-                }
-            }
-            sort(boundarySet.begin(), boundarySet.end());
-            int numL = 0;
-            int numR = 0;
-            for(size_t i = 0;i < boundarySet.size();i++) {
-                float nowL = boundarySet[i].bound;
-                numL += boundarySet[i].l_numbouns;
-                numR += boundarySet[i].r_numbouns;
-                while(i + 1 < boundarySet.size() && boundarySet[i + 1] == boundarySet[i]) {
-                    i++;
-                    numL += boundarySet[i].l_numbouns;
-                    numR += boundarySet[i].r_numbouns;
-                }
-                float nowR = (i == (boundarySet.size() - 1)) ? FLOAT_INF : boundarySet[i + 1].bound;
-                bucketSet.emplace_back(new bucket(nowL, nowR, numL, numR));
-            }
-        }
-
-        void analyzeIntervalWithOutMerge(std::map<size_t, std::vector<unsigned char>> &aes_key,
-            std::map<size_t, std::vector<unsigned char>> &aes_iv, const std::map<size_t, EncryptData> &kCiperTextMp, const int queryK) {
-            std::cout << "analyize the intervals without intervals merged" << std::endl;
-            eachBucketSet.clear();
-            databack.clear();
-            // m_logger.SetStartTimer();
-            parallelGetInterval(kCiperTextMp);
-            // m_logger.SetEndTimer();
-            // std::cout << "get interval takes " << m_logger.GetDurationTime() / 1000 << "s" << std::endl;
-            AES aes(AESKeyLength::AES_128);
-            std::vector<std::vector<boundary> > boundarySet(siloNum);
-            for(size_t i = 0;i < siloNum;i++) {
-                EncryptData data = databack[i];
-                std::vector<unsigned char> plainText = aes.DecryptCBC(StringToUnsignedVector(data.data()), aes_key.at(i), aes_iv.at(i));
-                size_t k = (size_t)UnsignedVectorToInt32(std::vector<unsigned char>(plainText.begin(), plainText.begin() + 4));
-                size_t bucketSize = (size_t)std::ceil(std::sqrt(queryK));
-                int num = (k + bucketSize - 1) / bucketSize;
-                if(num == 1) {
-                    float bound = UnsignedVectorToFloat(std::vector<unsigned char>(plainText.begin() + 4, plainText.begin() + 8));
-                    boundarySet[i].emplace_back((boundary){bound, 1, k});
-                } else {
-                    for(int j = 0;j < num;j++) {
-                        float bound = UnsignedVectorToFloat(std::vector<unsigned char>(plainText.begin() + 4 + 4 * j, plainText.begin() + 8 + 4 * j));
-                        if(j == 0) {
-                            boundarySet[i].emplace_back((boundary){bound, 1, bucketSize});
-                        } else if(j == num - 1) {
-                            boundarySet[i].emplace_back((boundary){bound, bucketSize, k - (bucketSize) * j});
-                        } else {
-                            boundarySet[i].emplace_back((boundary){bound, bucketSize, bucketSize});
-                        }
-                    }
-                }
-                std::sort(boundarySet[i].begin(), boundarySet[i].end());
-            }
-            eachBucketSet.resize(siloNum);
-            for(size_t i = 0;i < siloNum;i++) {
-                int numL = 0;
-                int numR = 0;
-                for(size_t j = 0;j < boundarySet[i].size();j++) {
-                    float nowL = boundarySet[i][j].bound;
-                    numL += boundarySet[i][j].l_numbouns;
-                    numR += boundarySet[i][j].r_numbouns;
-                    while(j + 1 < boundarySet[i].size() && boundarySet[i][j + 1] == boundarySet[i][j]) {
-                        j++;
-                        numL += boundarySet[i][j].l_numbouns;
-                        numR += boundarySet[i][j].r_numbouns;
-                    }
-                    float nowR = (j == (boundarySet[i].size() - 1)) ? FLOAT_INF : boundarySet[i][j + 1].bound;
-                    eachBucketSet[i].emplace_back(new bucket(nowL, nowR, numL, numR));
-                }
-                assert(eachBucketSet[i].back()->r == FLOAT_INF);
-            }
-        }
-
-        float analyzeIntervalZero(std::map<size_t, std::vector<unsigned char>> &aes_key,
-            std::map<size_t, std::vector<unsigned char>> &aes_iv, const std::map<size_t, EncryptData> &kCiperTextMp, const int queryK) {
-            std::cout << "exactly send tuples" << std::endl;
-            databack.clear();
-            // m_logger.SetStartTimer();
-            parallelGetInterval(kCiperTextMp);
-            return FLOAT_INF;
-        }
-
-        float binarySearchBase(int queryK) {
+        std::vector<float> binarySearchBase(int queryK) {
             float l = 0, r = 0;
             for(size_t i = 0;i < siloNum;i++) {
                 for(size_t j = 0;j < eachBucketSet[i].size();j++) {
@@ -574,19 +484,20 @@ class UserBrokerImpl final : public UserBroker::Service {
             }
             r += 1;
             const float eps = 1e-3;
-            std::vector<int> id2pos; //record each id's interval id 
+            float radius = 0;
             while(r - l > eps) {
                 float mid = (r + l) / 2;
-                size_t Lnum = 0, Rnum = 0;
-                id2pos.clear();
+                size_t Rnum = 0;
+                radius = 0;
                 for(size_t i = 0;i < siloNum;i++) {
-                    size_t L = 0, R = eachBucketSet[i].size() - 1;
-                    size_t ans = -1;
+                    if(eachBucketSet[i].empty()) continue;
+                    size_t L = 0, R = (int)eachBucketSet[i].size() - 1;
+                    int ansPos = -1;
                     while(L <= R) {
                         size_t Mid = (L + R) / 2;
                         if((eachBucketSet[i][Mid]->op == 1 && (eachBucketSet[i][Mid]->l <= mid && mid <= eachBucketSet[i][Mid]->r)) ||
                         (eachBucketSet[i][Mid]->op == 2 && (eachBucketSet[i][Mid]->l < mid && mid < eachBucketSet[i][Mid]->r))) {
-                            ans = Mid;
+                            ansPos = Mid;
                             break;
                         } else if(eachBucketSet[i][Mid]->l > mid) {
                             R = Mid - 1;
@@ -594,34 +505,56 @@ class UserBrokerImpl final : public UserBroker::Service {
                             L = Mid + 1;
                         }
                     }
-                    if(ans != -1) {
-                        Lnum += eachBucketSet[i][ans]->numL;
-                        Rnum += eachBucketSet[i][ans]->numR;
+                    if(ansPos != -1) {
+                        Rnum += eachBucketSet[i][ansPos]->numR;
+                        radius = std::max(radius, eachBucketSet[i][ansPos]->r);
                     }
-                    id2pos.emplace_back(ans);
                 }
-                if(Lnum <= queryK && Rnum >= queryK) {
-                    float radius = 0;
-                    for(int i = 0;i < siloNum;i++) {
-                        int id = id2pos[i];
-                        if(id == -1) continue;
-                        radius = std::max(radius, eachBucketSet[i][id]->r);
-                    }
-                    return radius;
-                } else if(queryK < Lnum) {
+                if(Rnum >= queryK) {
                     r = mid;
                 } else {
                     l = mid;
                 }
             }
-            return FLOAT_INF;
+            std::vector<float> ans(siloNum);
+            if(radius == FLOAT_INF) {
+                for(size_t i = 0;i < siloNum;i++) {
+                    ans[i] = radius;
+                } 
+            } else {
+                for(size_t i = 0;i < siloNum;i++) {
+                    if(eachBucketSet[i].empty()) {
+                        ans[i] = 0;
+                        continue;
+                    }
+                    size_t L = 0, R = eachBucketSet[i].size() - 1;
+                    int ansPos = -1;
+                    while(L <= R) {
+                        size_t Mid = (L + R) / 2;
+                        if((eachBucketSet[i][Mid]->op == 1 && (eachBucketSet[i][Mid]->l <= radius && radius <= eachBucketSet[i][Mid]->r)) ||
+                        (eachBucketSet[i][Mid]->op == 2 && (eachBucketSet[i][Mid]->l < radius && radius < eachBucketSet[i][Mid]->r))) {
+                            ansPos = Mid;
+                            break;
+                        } else if((eachBucketSet[i][Mid]->op == 1 && eachBucketSet[i][Mid]->l > radius) ||
+                        (eachBucketSet[i][Mid]->op == 2 && eachBucketSet[i][Mid]->l >= radius)) {
+                            R = Mid - 1;
+                        } else {
+                            L = Mid + 1;
+                        }
+                    }
+                    ans[i] = eachBucketSet[i][ansPos]->r;
+                }
+            }
+            return ans;
         }
 
-        float binarySearchOpt(int queryK) {
+        std::vector<float> binarySearchOpt(int queryK) {
             std::priority_queue<std::pair<optBucket, size_t>, std::vector<std::pair<optBucket, size_t>>, std::greater<std::pair<optBucket, size_t>>> q;
+            std::vector<int> posMp(siloNum, 0);
             for(int i = 0;i < siloNum;i++) {
                 if(optBucketSet[i].empty()) continue;
                 q.push(std::make_pair(*(optBucketSet[i][0]), 0));
+                posMp[i] = 0;
             }
             int cnt = 0;
             float radius = 0;
@@ -631,114 +564,24 @@ class UserBrokerImpl final : public UserBroker::Service {
                 cnt += item.first.num;
                 radius = std::max(radius, item.first.r);
                 size_t siloId = item.first.siloId;
+                if(cnt >= queryK) break;
                 if(item.second + 1 < optBucketSet[siloId].size()) {
                     q.push(std::make_pair(*(optBucketSet[siloId][item.second + 1]), item.second + 1));
+                    posMp[siloId] = item.second + 1;
                 }
             }
-            return radius;
-        }
-
-        float binarySearchMultiSilo(int queryK) {
-            float l = 0, r = 0;
-            for(size_t i = 0;i < siloNum;i++) {
-                for(size_t j = 0;j < eachBucketSet[i].size();j++) {
-                    r = std::max(eachBucketSet[i][j]->l, r);
-                }
-            }
-            std::cout << "the max radius is " << r << std::endl;
-            r += 1; // expand r
-            const float eps = 1e-3;
-            std::vector<int> id2pos; //record each id's interval id 
-            while(r - l > eps) {
-                float mid = (r + l) / 2;
-                size_t Lnum = 0, Rnum = 0;
-                id2pos.clear();
-                for(size_t i = 0;i < siloNum;i++) {
-                    if(mid < eachBucketSet[i][0]->l) {
-                        id2pos.emplace_back(-1);
-                    } else {
-                        size_t L = 0, R = eachBucketSet[i].size() - 1;
-                        size_t ans;
-                        while(L <= R) {
-                            size_t Mid = (L + R) / 2;
-                            if(eachBucketSet[i][Mid]->l <= mid && mid < eachBucketSet[i][Mid]->r) {
-                                ans = Mid;
-                                break;
-                            } else if(eachBucketSet[i][Mid]->l > mid) {
-                                R = Mid - 1;
-                            } else {
-                                L = Mid + 1;
-                            }
-                        }
-                        Lnum += eachBucketSet[i][ans]->numL;
-                        Rnum += eachBucketSet[i][ans]->numR;
-                        id2pos.emplace_back(ans);
-                    }
-                }
-                if(Lnum <= queryK && Rnum >= queryK) {
-                    float minBound = FLOAT_INF;
-                    size_t minPos = -1;
-                    for(size_t i = 0;i < siloNum;i++) {
-                        if(id2pos[i] == -1) continue;
-                        int nowid = id2pos[i];
-                        if(eachBucketSet[i][nowid]->r < minBound) {
-                            minPos = i;
-                            minBound = eachBucketSet[i][nowid]->r;
-                        }
-                    }
-                    if(minPos == -1) {
-                        return minBound;
-                    } else {
-                        for(size_t i = 0;i < siloNum;i++) {
-                            int nowid = id2pos[i];
-                            if(nowid == -1) continue;
-                            if(eachBucketSet[i][nowid]->r == minBound) {
-                                Lnum += eachBucketSet[i][nowid + 1]->numL - eachBucketSet[i][nowid]->numL;
-                                Rnum += eachBucketSet[i][nowid + 1]->numR - eachBucketSet[i][nowid]->numR;
-                            }
-                        }
-                        if(Lnum > queryK) {
-                            return minBound;
-                        } else {
-                            l = mid;
-                        }
-                    }
-                } else if(Lnum > queryK) {
-                    r = mid;
-                } else {
-                    l = mid;
-                }
-            }
-            return r;
-        }
-
-        float binarySearch(int queryK) {
-            int l = 0, r = (int)bucketSet.size() - 1;
-            float ans;
-            while(l <= r) {
-                int mid = (l+r)/2;
-                if(bucketSet[mid]->numL <= queryK && bucketSet[mid]->numR >= queryK) {
-                    if(mid == ((int)bucketSet.size() - 1) || bucketSet[mid + 1]->numL > queryK) {
-                        ans = bucketSet[mid]->r;
-                        break;
-                    } else {
-                        l = mid + 1;
-                    }
-                } else if(bucketSet[mid]->numL > queryK) {
-                    r = mid - 1;
-                } else {
-                    l = mid + 1;
-                }
-            }
-            if(ans == FLOAT_INF) {
-                ans = 0;
+            std::vector<float> ans(siloNum, 0);
+            for(int i = 0;i < siloNum;i++) {
+                if(optBucketSet[i].empty()) ans[i] = 0;
+                else ans[i] = optBucketSet[i][posMp[i]]->r;
+                // ans[i] = radius;
             }
             return ans;
         }
 
         void executeKNN(const VectorDataType &queryV, const size_t queryK, const std::string &condition) {
+            //exchange aes key and initialize aes
             secretKeyExchange();
-            //initialize aes
             std::map<size_t, std::vector<unsigned char>> aes_key, aes_iv;
             for(size_t i = 0;i < siloNum;i++) {
                 aes_key[i] = std::vector<unsigned char>();
@@ -755,82 +598,97 @@ class UserBrokerImpl final : public UserBroker::Service {
                 }
             }
             AES aes(AESKeyLength::AES_128);
-            std::vector<size_t> kSet;
-            
-            // contribution analysis
-            m_logger.SetStartTimer();
-            analyizeContribution(aes_key, aes_iv, queryV, queryK, condition, kSet);
-            for(size_t i = 0;i < kSet.size();i++) {
-                std::cout << kSet[i] << " ";
-            }
-            std::cout << std::endl;
-            m_logger.SetEndTimer();
-            std::cout << "contribution analysis takes " << m_logger.GetDurationTime() / 1000 << "s" << std::endl;
 
-            float radius;
+            // Sec 3.4 : Contribution Pre-estimation 
+            std::vector<size_t> kSet;
+            analyzeContribution(aes_key, aes_iv, queryV, queryK, condition, kSet);
             std::map<size_t, EncryptData> ciperMp; 
+
+
+            #ifdef USE_TRUSTED_BROKER
+            // for(size_t i = 0;i < kSet.size();i++) {
+            //     std::cout << kSet[i] << " ";
+            // }
+            // std::cout << std::endl;
             for(size_t i = 0;i < siloNum;i++) {
                 size_t prunedK = kSet[i];
                 std::vector<unsigned char> plainText = Int32ToUnsignedVector((int)prunedK);
-                if (plainText.size() % 16 != 0) {
-                    // std::cout << "[BEFORE Padding] plainText.size() = " << plainText.size() << std::endl;
-                    for (int c = plainText.size() % 16; c < 16; ++c) {
-                        plainText.emplace_back('\0');
-                    }
-                    // std::cout << "[AFTER Padding] plainText.size() = " << plainText.size() << std::endl;
-                }
+                padding(plainText);
                 std::vector<unsigned char> ciperText = aes.EncryptCBC(plainText, aes_key[i], aes_iv[i]);
                 EncryptData data;
                 data.set_data(std::string(ciperText.begin(), ciperText.end()));
                 ciperMp[i] = data; 
             }
-            
-            m_logger.SetStartTimer();
-            if(topKOption > 1) {    
-                if(topKOption == 2) {
-                    analyzeIntervalWithOutMerge(aes_key, aes_iv, ciperMp, queryK);
-                    radius = binarySearchMultiSilo(queryK);
-                } else if(topKOption == 3){
-                    analyzeInterval(aes_key, aes_iv, ciperMp, queryK);
-                    radius = binarySearch(queryK);
-                } else if(topKOption == 4) {
-                    analyzeIntervalBase(aes_key, aes_iv, ciperMp, queryK);
-                    radius = binarySearchBase(queryK);
-                } else if(topKOption == 5) {
-                    analyzeIntervalOpt(aes_key, aes_iv, ciperMp, queryK);
-                    radius = binarySearchOpt(queryK);
-                }
+            #endif
+
+            #ifdef USE_INTEL_SGX
+            for(size_t i = 0;i < siloNum;i++) {
+                std::vector<unsigned char> ciperText = SgxGetPrunedK(i, 16, aes_key[i].data(), aes_iv[i].data());
+                EncryptData data;
+                data.set_data(std::string(ciperText.begin(), ciperText.end()));
+                ciperMp[i] = data; 
+            }
+            #endif
+
+            // phase I: candidate refinement
+            #ifdef USE_TRUSTED_BROKER
+            std::vector<float> radius;
+            if(topKOption == 1) {
+                analyzeIntervalBase(aes_key, aes_iv, ciperMp, queryK);
+                radius = binarySearchBase(queryK);
             } else {
-                radius = analyzeIntervalZero(aes_key, aes_iv, ciperMp, queryK);
-            }
-            m_logger.SetEndTimer();
-            optTopKTime += m_logger.GetDurationTime();
-            std::cout << "interval analysis and milvus query takes " << m_logger.GetDurationTime() << "ms" << std::endl;
-            
-            // get (dis, id) Set
-            m_logger.SetStartTimer();    
-            databack.clear();
-            std::vector<unsigned char> plainText = FloatToUnsignedVector(radius);
-            if (plainText.size() % 16 != 0) {
-                // std::cout << "[BEFORE Padding] plainText.size() = " << plainText.size() << std::endl;
-                for (int c = plainText.size() % 16; c < 16; ++c) {
-                    plainText.emplace_back('\0');
-                }
-                // std::cout << "[AFTER Padding] plainText.size() = " << plainText.size() << std::endl;
-            }
+                analyzeIntervalOpt(aes_key, aes_iv, ciperMp, queryK);
+                radius = binarySearchOpt(queryK);
+            }           
+
+            // for(int i = 0;i < radius.size();i++) {
+            //     std::cout << radius[i] << " ";
+            // } 
+            // std::cout << std::endl;
             ciperMp.clear();
             for(size_t i = 0;i < siloNum;i++) {
+                std::vector<unsigned char> plainText = FloatToUnsignedVector(radius[i]);
+                padding(plainText); // padding plainText to length % 16 == 0
                 std::vector<unsigned char> ciperText = aes.EncryptCBC(plainText, aes_key[i], aes_iv[i]);
                 EncryptData data;
                 data.set_data(std::string(ciperText.begin(), ciperText.end()));
                 ciperMp[i] = data; 
             }
-            parallelGetDisInf(ciperMp);
-            m_logger.SetEndTimer();
-            std::cout << "get dis Set takes " << m_logger.GetDurationTime() / 1000 << "s" << std::endl;
+            #endif
 
-            // final top-k with pq 
-            m_logger.SetStartTimer();
+            #ifdef USE_INTEL_SGX
+            databack.clear();
+            parallelGetInterval(ciperMp);
+            ciperMp.clear();
+            if(topKOption == 1) {
+                for(size_t i = 0;i < siloNum;i++) {
+                    SgxClearInfo(i);
+                    std::vector<unsigned char> dat = StringToUnsignedVector(databack[i].data());
+                    SgxImportInfo(i, 4, dat.size(), queryK, aes_key[i].data(), aes_iv[i].data(), dat.data());
+                }
+                SgxCandRefinementBase(siloNum, queryK);
+            } else {
+                for(size_t i = 0;i < siloNum;i++) {
+                    SgxClearInfo(i);
+                    std::vector<unsigned char> dat = StringToUnsignedVector(databack[i].data());
+                    SgxImportInfo(i, 2, dat.size(), queryK, aes_key[i].data(), aes_iv[i].data(), dat.data());
+                }
+                SgxCandRefinement(siloNum, queryK);
+            }
+            for(size_t i = 0;i < siloNum;i++) {
+                std::vector<unsigned char> ciperText = SgxGetThres(i, 16, aes_key[i].data(), aes_iv[i].data());
+                EncryptData data;
+                data.set_data(std::string(ciperText.begin(), ciperText.end()));
+                ciperMp[i] = data; 
+            }
+            #endif
+
+            // phase II: top-k selection
+            databack.clear();
+            parallelGetDisInf(ciperMp);
+
+            std::map<size_t, int> numMp;
+            #ifdef USE_TRUSTED_BROKER
             std::priority_queue<std::pair<float, size_t>, std::vector<std::pair<float, size_t>>, std::greater<std::pair<float, size_t>>> q;
             std::vector<std::vector<float>> disSet;
             disSet.resize(siloNum);
@@ -840,13 +698,10 @@ class UserBrokerImpl final : public UserBroker::Service {
                 int cnt = UnsignedVectorToInt32(std::vector<unsigned char>(plainText.begin(), plainText.begin() + 4));
                 for(int j = 0;j < cnt;j++) {
                     float dis = UnsignedVectorToFloat(std::vector<unsigned char>(plainText.begin() + 4 + 4 * j, plainText.begin() + 8 + 4 * j));
-                    // std::cout << dis << " ";
                     disSet[i].emplace_back(dis); 
                 }
-                // std::cout << std::endl;
             }
             std::map<size_t, int> posMp;
-            std::map<size_t, int> numMp;
             for(int i = 0;i < siloNum;i++) {
                 posMp[i] = numMp[i] = 0;
                 if(posMp[i] < disSet[i].size()) {
@@ -866,6 +721,20 @@ class UserBrokerImpl final : public UserBroker::Service {
                     posMp[siloId]++;
                 }
             }
+            #endif
+
+            #ifdef USE_INTEL_SGX
+            for(size_t i = 0;i < siloNum;i++) {
+                SgxClearInfo(i);
+                std::vector<unsigned char> dat = StringToUnsignedVector(databack[i].data());
+                SgxImportInfo(i, 3, dat.size(), queryK, aes_key[i].data(), aes_iv[i].data(), dat.data());
+            }
+            SgxTopkSelection(siloNum, queryK);
+            for(size_t i = 0;i < siloNum;i++) {
+                numMp[i] = SgxGetK(i);
+            }
+            #endif
+
             std::map<size_t, Number> newMp;
             for(size_t i = 0;i < siloNum;i++) {
                 // std::cout << numMp[i] << " ";
@@ -875,8 +744,6 @@ class UserBrokerImpl final : public UserBroker::Service {
             }
             // std::cout << std::endl;
             parallelsendK(newMp);
-            m_logger.SetEndTimer();
-            std::cout << "final top-k with pq takes " << m_logger.GetDurationTime() / 1000 << "s" << std::endl;
         }
 
         Status requestKNN(ServerContext* context, const userbroker::knnQuery* request, Empty* response) {

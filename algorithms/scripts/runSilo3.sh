@@ -1,1 +1,19 @@
-../cpp/build/silo --ip=localhost:50053 --id=3 --data-path=/home/dataset/testHybrid/YouTube-audio/YouTube_3.fivecs --scalardata-path=/home/dataset/testHybrid/YouTube-audio/meta_3.txt --cluster-path=/home/dataset/testHybrid/YouTube-audio/YouTube_3.cluster/cluster --index-type=HNSW --collection-name=LOCAL_DATA3
+#!/bin/bash
+
+ORIGINAL_DIR=$(pwd)
+cd ../cpp/build
+silo_id=3
+number=$((0*5 + ${silo_id}))
+data_path="/home/dataset/hybrid/YouTube-audio/YouTube_${number}.fivecs"
+scalardata_path="/home/dataset/hybrid/YouTube-audio/meta_${number}.txt"
+cluster_path="/home/dataset/hybrid/YouTube-audio/YouTube_${number}.cluster/cluster"
+collection_name="LOCAL_DATA_${number}"
+milvus_port="50055"
+cluster_option="OFF"
+milvus_option="OFF"
+alpha=0.05
+cluster_num=10
+ 
+./silo --ip=localhost:50053 --id=$number --data-path=$data_path --scalardata-path=$scalardata_path --cluster-path=$cluster_path --index-type=HNSW --collection-name=$collection_name --milvus-port=$milvus_port --cluster-option=$cluster_option --milvus-option=$milvus_option --alpha=$alpha --cluster-num=$cluster_num
+
+cd "$ORIGINAL_DIR"

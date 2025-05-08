@@ -28,6 +28,7 @@ include_guard(GLOBAL)
 # )
 # FetchContent_Populate(milvus_proto)
 set(milvus_proto_BINARY_DIR "${CMAKE_BINARY_DIR}/refs/milvus_proto-build")
+execute_process( COMMAND ${CMAKE_COMMAND} -E make_directory ${milvus_proto_BINARY_DIR})
 set(milvus_proto_SOURCE_DIR "${CMAKE_BINARY_DIR}/refs/milvus_proto-src")
 
 set(PROTO_BINARY_DIR "${milvus_proto_BINARY_DIR}")

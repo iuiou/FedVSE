@@ -42,6 +42,12 @@ using brokersilo::Number;
 
 #define recordIndexBuilding
 
+std::string MilvusPort = "19530";
+bool buildClusterOption = false;
+bool buildMilvusOption = false;
+float alpha = 0.05;
+int clusterNumber = 10;
+
 size_t avgK = 0;
 size_t minK = 1e9;
 
@@ -69,7 +75,7 @@ class BrokerSiloImpl final : public BrokerSilo::Service {
         m_logger.Init();
         siloPtr = std::make_unique<MilvusSiloConnector<Distance>>(siloId, ipAddr, collectionName);
         siloPtr->ImportScalarData(scalarName);
-        siloPtr->ConnectDB("fzh", "fzh", "123", "localhost", "19530"); // only the last two attributes make sense
+        siloPtr->ConnectDB("fzh", "fzh", "123", "localhost", MilvusPort); // only the last two attributes make sense
         if(buildMilvusOption) {
             siloPtr->ImportData(dataName);
             siloPtr->ConstructIndex(indexType);
@@ -81,10 +87,9 @@ class BrokerSiloImpl final : public BrokerSilo::Service {
         if(buildClusterOption) {
             if(!buildMilvusOption) siloPtr->ImportData(dataName);
             const int iteration = 10;
-            int clusterNum = 10;
             m_logger.SetStartTimer();
             std::cout << "start k means" << std::endl;
-            std::unique_ptr<AvgKmeans> KmeansOperator = std::make_unique<AvgKmeans>(siloPtr->getVectorData(), clusterNum, iteration);
+            std::unique_ptr<AvgKmeans> KmeansOperator = std::make_unique<AvgKmeans>(siloPtr->getVectorData(), clusterNumber, iteration);
             std::cout << "end k means" << std::endl;
             KmeansOperator->dumpToFile(clusterName);
             KmeansOperator->dumpClusterToFile(clusterAddName);
@@ -314,7 +319,7 @@ class BrokerSiloImpl final : public BrokerSilo::Service {
                 disIntervals.emplace_back(nowCluster);
             }
         }
-        std::cout << "clusters' number is " << disIntervals.size() << std::endl;
+        // std::cout << "Filtered clusters' number is " << disIntervals.size() << std::endl;
         float sel = 1.0 * count / sum;
         if(sel == 0) {
             return FLOAT_INF;
@@ -387,16 +392,14 @@ class BrokerSiloImpl final : public BrokerSilo::Service {
     float evaluateUpperbound() {
         std::vector<std::pair<int,int>> conditionList;
         parseQuery(conditionList);
-        m_logger.SetStartTimer();
+        // m_logger.SetStartTimer();
         // std::cout << "now condition is " << condition << std::endl;
         if(localSearchOption == 1) { // exact
             return -1;
-        } else if(localSearchOption == 2) { // global estimate
-            return globalEstimate(conditionList);
-        } else if(localSearchOption == 3) { // use cluster to estimate
+        } else if(localSearchOption == 2) { // use cluster to estimate
             float ans = clusterEstimate(conditionList);
-            m_logger.SetEndTimer();
-            std::cout << m_logger.GetDurationTime() << "ms" << std::endl;
+            // m_logger.SetEndTimer();
+            // std::cout << m_logger.GetDurationTime() << "ms" << std::endl;
             return ans;
         }
     }
@@ -443,13 +446,7 @@ class BrokerSiloImpl final : public BrokerSilo::Service {
         }
         std::vector<unsigned char> plainText = FloatToUnsignedVector(upperb);
         AES aes(AESKeyLength::AES_128);
-        if (plainText.size() % 16 != 0) {
-            // std::cout << "[BEFORE Padding] plainText.size() = " << plainText.size() << std::endl;
-            for (int c = plainText.size() % 16; c < 16; ++c) {
-                plainText.emplace_back('\0');
-            }
-            // std::cout << "[AFTER Padding] plainText.size() = " << plainText.size() << std::endl;
-        }
+        padding(plainText);
         std::vector<unsigned char> ciperText = aes.EncryptCBC(plainText, aes_key, aes_iv);
         response->set_data(std::string(ciperText.begin(), ciperText.end()));
         double grpc_comm = request->ByteSizeLong() + response->ByteSizeLong();
@@ -477,33 +474,17 @@ class BrokerSiloImpl final : public BrokerSilo::Service {
         AES aes(AESKeyLength::AES_128);
         std::vector<unsigned char> plainText = aes.DecryptCBC(StringToUnsignedVector(kCiperText), aes_key, aes_iv);
         size_t newK = (size_t)UnsignedVectorToInt32(std::vector<unsigned char>(plainText.begin(), plainText.begin() + 4));
+        // std::cout << "pruned k : " << newK << std::endl;
         exactKNN(newK);
         newK = std::min(newK, candidates.size());
 
-        avgK += newK;
-        minK = std::min(minK, newK);
+        // std::cout << "after vector search k : " << newK << std::endl;
 
-        int blockS = (int)std::ceil(std::sqrt(queryK)); // queryK不改变
-        if(topKOption == 1) {
-            plainText.clear();
-            plainText = Int32ToUnsignedVector(0);
-        } else if(topKOption == 2 || topKOption == 3) {
-            std::vector<float> border;
-            size_t ptr = 0;
-            border.emplace_back(candidates[0].first);
-            while(ptr + blockS < candidates.size()) {
-                ptr += blockS;
-                border.emplace_back(candidates[ptr].first);
-            }
-            std::sort(border.begin(), border.end());
-            plainText.clear();
-            std::vector<unsigned char> kPlain = Int32ToUnsignedVector((int)newK);
-            plainText.insert(plainText.begin(), kPlain.begin(), kPlain.end());
-            for(float bound : border) {
-                std::vector<unsigned char> boundPlain = FloatToUnsignedVector(bound);
-                plainText.insert(plainText.end(), boundPlain.begin(), boundPlain.end());
-            }
-        } else if(topKOption == 4) {
+        avgK += newK;
+        minK = std::min(minK, newK); // ablation study for optimization #2
+
+        int blockS = (int)std::ceil(std::sqrt(queryK));
+        if(topKOption == 1) { // refine with binary search
             std::vector<std::pair<float, float>> border;
             int ptr = 0;
             while(ptr + blockS < candidates.size()) {
@@ -521,7 +502,7 @@ class BrokerSiloImpl final : public BrokerSilo::Service {
                 plainText.insert(plainText.end(), boundleft.begin(), boundleft.end());
                 plainText.insert(plainText.end(), boundright.begin(), boundright.end());
             }
-        } else {
+        } else if(topKOption == 2) { // refine with priority queue (our algorithm)
             std::vector<float> border;
             int ptr = blockS - 1;
             while(ptr < candidates.size()) {
@@ -529,6 +510,9 @@ class BrokerSiloImpl final : public BrokerSilo::Service {
                 ptr += blockS;
             }
             int num = (newK + blockS - 1) / blockS;
+
+            // printf("[OUT OF SGX] silo_id : %d, bucketSize : %d, num : %d\n", siloPtr->GetSiloId(), blockS, num);
+
             if(border.size() < num) border.emplace_back(candidates.back().first);
             plainText.clear(); 
             std::vector<unsigned char> kPlain = Int32ToUnsignedVector((int)newK);
@@ -538,13 +522,7 @@ class BrokerSiloImpl final : public BrokerSilo::Service {
                 plainText.insert(plainText.end(), bound.begin(), bound.end());
             }
         }
-        if (plainText.size() % 16 != 0) {
-            // std::cout << "[BEFORE Padding] plainText.size() = " << plainText.size() << std::endl;
-            for (int c = plainText.size() % 16; c < 16; ++c) {
-                plainText.emplace_back('\0');
-            }
-            // std::cout << "[AFTER Padding] plainText.size() = " << plainText.size() << std::endl;
-        }
+        padding(plainText);
         std::vector<unsigned char> ciperText = aes.EncryptCBC(plainText, aes_key, aes_iv);
         response->set_data(std::string(ciperText.begin(), ciperText.end()));
         double grpc_comm = request->ByteSizeLong() + response->ByteSizeLong();
@@ -572,6 +550,7 @@ class BrokerSiloImpl final : public BrokerSilo::Service {
         }
         std::vector<unsigned char> plainText = aes.DecryptCBC(StringToUnsignedVector(rCiperText), aes_key, aes_iv);
         float range = UnsignedVectorToFloat(std::vector<unsigned char>(plainText.begin(), plainText.begin() + 4));
+        // std::cout << "pruned range : " << range << std::endl;
         if(range <= 0) {
             range = FLOAT_INF;
         } 
@@ -586,13 +565,7 @@ class BrokerSiloImpl final : public BrokerSilo::Service {
         }
         std::vector<unsigned char> cntPlain = Int32ToUnsignedVector(cnt);
         plainText.insert(plainText.begin(), cntPlain.begin(), cntPlain.end());
-        if (plainText.size() % 16 != 0) {
-            // std::cout << "[BEFORE Padding] plainText.size() = " << plainText.size() << std::endl;
-            for (int c = plainText.size() % 16; c < 16; ++c) {
-                plainText.emplace_back('\0');
-            }
-            // std::cout << "[AFTER Padding] plainText.size() = " << plainText.size() << std::endl;
-        }
+        padding(plainText);
         std::vector<unsigned char> ciperText = aes.EncryptCBC(plainText, aes_key, aes_iv);
         response->set_data(std::string(ciperText.begin(), ciperText.end()));
 
@@ -698,8 +671,13 @@ int main(int argc, char** argv){
             ("data-path", bpo::value<std::string>(), "Data file path")
             ("scalardata-path", bpo::value<std::string>(), "scalar data file path")
             ("cluster-path", bpo::value<std::string>(), "cluster file path")
+            ("milvus-port", bpo::value<std::string>(), "running port of Milvus")
             ("collection-name", bpo::value<std::string>(), "milvus collection's name")
             ("index-type", bpo::value<std::string>(), "Index's type of local vector database")
+            ("cluster-option", bpo::value<std::string>(), "whether build clusters")
+            ("milvus-option", bpo::value<std::string>(), "whether import data")
+            ("alpha", bpo::value<float>(&alpha)->default_value(0.05), "our CLI's hyper-parameter $\\alpha$")
+            ("cluster-num", bpo::value<int>(&clusterNumber)->default_value(10), "our CLI's hyper-parameter: number of clusters")
         ;
 
         bpo::variables_map variable_map;
@@ -762,6 +740,35 @@ int main(int argc, char** argv){
             std::cout << "Data silo's index type was not set" << "\n";
             options_all_set = false;
         }
+
+        if (variable_map.count("milvus-port")) {
+            MilvusPort = variable_map["milvus-port"].as<std::string>();
+            std::cout << "Local Milvus's port was set as " << MilvusPort << "\n";
+        } else {
+            std::cout << "Local Milvus's port was not set " << "\n";
+            options_all_set = false;
+        }
+
+        if (variable_map.count("cluster-option")) {
+            std::string buildCluster = variable_map["cluster-option"].as<std::string>();
+            std::cout << "Build Cluster Option was set as " << buildCluster << "\n";
+            buildClusterOption = (buildCluster == "ON" ? true : false);
+        } else {
+            std::cout << "Build Cluster Option was not set " << "\n";
+            options_all_set = false;
+        }
+
+        if (variable_map.count("milvus-option")) {
+            std::string buildMilvus = variable_map["milvus-option"].as<std::string>();
+            std::cout << "Build Milvus Option was set as " << buildMilvus << "\n";
+            buildMilvusOption = (buildMilvus == "ON" ? true : false);
+        } else {
+            std::cout << "Build Milvus Option was not set " << "\n";
+            options_all_set = false;
+        }
+
+        std::cout << "hyper parameter alpha was set as " << alpha << "\n"; 
+        std::cout << "cluster's number was set as " << clusterNumber << "\n"; 
 
         if (false == options_all_set) {
             throw std::invalid_argument("Some options were not properly set");

@@ -1,8 +1,61 @@
 cmake_minimum_required(VERSION 3.12)
-project(milvus_hpp_test LANGUAGES CXX)
+project(FedVS VERSION 1.0 DESCRIPTION "An efficient and secure algorithm for federated vector similarity search with filters" LANGUAGES CXX)  
 
 set(CMAKE_VERBOSE_MAKEFILE OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+if(USE_SGX STREQUAL "ON")
+    message(STATUS "Compiling SGX MPC:")
+
+    set(Enclave_Test_Key "${CMAKE_BINARY_DIR}/Enclave_private_test.pem")  
+    if(NOT EXISTS ${Enclave_Test_Key})  
+        message(STATUS "There is no enclave test key<${Enclave_Test_Key}>.")  
+        message(STATUS "The project will generate a key<${Enclave_Test_Key}> for test.")  
+        execute_process(  
+            COMMAND openssl genrsa -out ${Enclave_Test_Key} -3 3072  
+            RESULT_VARIABLE openssl_result  
+            OUTPUT_QUIET  
+            ERROR_QUIET  
+        )  
+        if(NOT openssl_result EQUAL 0)  
+            message(FATAL_ERROR "Failed to generate RSA key.")  
+        endif()  
+    endif()
+
+    list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/sgx/cmake")
+    find_package(SGX REQUIRED)
+
+    message("CMAKE_SOURCE_DIR: ${CMAKE_SOURCE_DIR}")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+
+    set(EDL_SEARCH_PATHS ${CMAKE_SOURCE_DIR}/sgx/Enclave)
+    set(E_SRCS ${CMAKE_SOURCE_DIR}/sgx/Enclave/Enclave.cpp)
+
+    # if(SGX_HW AND SGX_MODE STREQUAL "Release")
+        set(LDS ${CMAKE_SOURCE_DIR}/sgx/Enclave/Enclave.lds)
+    # else()
+    #     set(LDS ${CMAKE_SOURCE_DIR}/sgx/Enclave/Enclave_debug.lds)
+    # endif()
+
+    add_enclave_library(enclave 
+        SRCS ${E_SRCS} 
+        EDL ${EDL_SEARCH_PATHS}/Enclave.edl 
+        EDL_SEARCH_PATHS ${EDL_SEARCH_PATHS} 
+        LDSCRIPT ${LDS})
+
+    message(STATUS "Enclave_Test_Key=${Enclave_Test_Key}")
+    enclave_sign(enclave 
+        KEY ${Enclave_Test_Key} 
+        CONFIG ${EDL_SEARCH_PATHS}/Enclave.config.xml)
+
+    set(SRCS ${CMAKE_SOURCE_DIR}/sgx/mpc/SgxMpc.cpp)
+    add_untrusted_library(SgxMpc 
+        STATIC 
+        SRCS ${SRCS} 
+        EDL ${EDL_SEARCH_PATHS}/Enclave.edl
+        EDL_SEARCH_PATHS ${EDL_SEARCH_PATHS})
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -145,18 +198,45 @@ target_link_libraries(${_target} PRIVATE Boost::program_options Boost::system)
 
 set(_target "broker")
 message(STATUS "Compiling executable ${_target}")
-add_executable(${_target} "./Broker.cpp")
-target_link_libraries(${_target} PRIVATE
-    # asan
-    milvus_sdk
-    grpc_proto
-    File_IO
-    AES
-    "pthread"
-    ${_REFLECTION}
-    ${_GRPC_GRPCPP}
-    ${_PROTOBUF_LIBPROTOBUF})
-target_link_libraries(${_target} PRIVATE Boost::program_options Boost::system)
+if(USE_SGX STREQUAL "ON")
+    set(SRCS "${CMAKE_SOURCE_DIR}/Broker.cpp")
+    message(STATUS "SRCS=${SRCS}")
+    message(STATUS "EDL=${CMAKE_SOURCE_DIR}/sgx/Enclave/Enclave.edl")
+    add_untrusted_executable(${_target} 
+        SRCS ${SRCS}
+        EDL ${EDL_SEARCH_PATHS}/Enclave.edl
+        EDL_SEARCH_PATHS ${EDL_SEARCH_PATHS})
+    target_compile_definitions(${_target} PRIVATE USE_INTEL_SGX)
+    # if(LOCAL_DEBUG STREQUAL "ON")
+    #     target_compile_definitions(${_target} PRIVATE LOCAL_DEBUG)
+    # endif()
+    add_dependencies(${_target} enclave-sign)
+    target_link_libraries(${_target}
+        milvus_sdk
+        grpc_proto
+        File_IO
+        AES
+        SgxMpc
+        "pthread"
+        ${_REFLECTION}
+        ${_GRPC_GRPCPP}
+        ${_PROTOBUF_LIBPROTOBUF})
+    target_link_libraries(${_target} Boost::program_options Boost::system)
+else()
+    add_executable(${_target} "./Broker.cpp")
+    target_compile_definitions(${_target} PRIVATE USE_TRUSTED_BROKER)
+    target_link_libraries(${_target} PRIVATE
+        # asan
+        milvus_sdk
+        grpc_proto
+        File_IO
+        AES
+        "pthread"
+        ${_REFLECTION}
+        ${_GRPC_GRPCPP}
+        ${_PROTOBUF_LIBPROTOBUF})
+    target_link_libraries(${_target} PRIVATE Boost::program_options Boost::system)
+endif()
 
 set(_target "user")
 message(STATUS "Compiling executable ${_target}")

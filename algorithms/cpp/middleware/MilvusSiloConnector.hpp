@@ -295,7 +295,7 @@ public:
         for (auto &attr: m_scalar_data_list) {
             arguments.AddOutputField(attr->getName());
         }
-        arguments.AddExtraParam("ef", query_k);
+        // arguments.AddExtraParam("ef", query_k);
         arguments.SetExpression(condition);
         arguments.AddTargetVector("vector", std::move(query_data.data));
         milvus::SearchResults search_results{};
