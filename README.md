@@ -2,7 +2,7 @@
 
 **This repository aims to provide a prototype system for our system FedVSE, which serves as a privacy-preserving and efficient vector search engine for federated databases**
 
-More technical details of our vector search engine's core algorithms are available in our repository and please refer to [technical_report.pdf](https://github.com/iuiou/FedVSE/blob/master/technical_report.pdf).
+More technical details of our vector search engine's core algorithms are available in our repository and please refer to [technical_report.pdf](https://github.com/iuiou/FedVSE/blob/master/technical_report.pdf). **The research paper of the core algorithm will appear in KDD 2025**. 
 
 # Environment
 
