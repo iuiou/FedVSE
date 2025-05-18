@@ -216,12 +216,12 @@ int main(int argc, char** argv) {
         bpo::options_description option_description("Required options");
         option_description.add_options()
             ("help", "produce help message")
-            ("broker-ip", bpo::value<std::string>(), "Broker's IP address")
-            ("silo-ip", bpo::value<std::string>(), "Data silo's IP configuration file path")
-            ("query-k", bpo::value<int>(), "Query parameter k")
-            ("query-path", bpo::value<std::string>(), "Query file path")
-            ("output-path", bpo::value<std::string>(), "Answer file path")
-            ("truth-path", bpo::value<std::string>(), "Ground truth file path");
+            ("broker-ip", bpo::value<std::string>(), "ip address of central server")
+            ("silo-ip", bpo::value<std::string>(), "ip address of each data provider")
+            ("query-k", bpo::value<int>(), "query parameter $k$")
+            ("query-path", bpo::value<std::string>(), "file path of query vectors and attribute filter")
+            ("output-path", bpo::value<std::string>(), "file path that stores output")
+            ("truth-path", bpo::value<std::string>(), "file path that stores ground truth of queries");
 
         bpo::variables_map variable_map;
         bpo::store(bpo::parse_command_line(argc, argv, option_description), variable_map);

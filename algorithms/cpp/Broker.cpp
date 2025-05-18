@@ -790,8 +790,8 @@ int main(int argc, char** argv) {
         bpo::options_description option_description("Required options");
         option_description.add_options()
             ("help", "produce help message")
-            ("broker-ip", bpo::value<std::string>(), "Broker's IP address")
-            ("silo-ip", bpo::value<std::string>(), "Data silo's IP configuration file path");
+            ("broker-ip", bpo::value<std::string>(), "ip address of central server")
+            ("silo-ip", bpo::value<std::string>(), "ip address of each data provider");
 
         bpo::variables_map variable_map;
         bpo::store(bpo::parse_command_line(argc, argv, option_description), variable_map);

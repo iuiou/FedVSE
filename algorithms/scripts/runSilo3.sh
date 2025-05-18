@@ -13,7 +13,8 @@ cluster_option="OFF"
 milvus_option="OFF"
 alpha=0.05
 cluster_num=10
+ipaddr=localhost:50053
  
-./silo --ip=localhost:50053 --id=$number --data-path=$data_path --scalardata-path=$scalardata_path --cluster-path=$cluster_path --index-type=HNSW --collection-name=$collection_name --milvus-port=$milvus_port --cluster-option=$cluster_option --milvus-option=$milvus_option --alpha=$alpha --cluster-num=$cluster_num
+./silo --ip=$ipaddr --id=$number --data-path=$data_path --scalardata-path=$scalardata_path --cluster-path=$cluster_path --index-type=HNSW --collection-name=$collection_name --milvus-port=$milvus_port --cluster-option=$cluster_option --milvus-option=$milvus_option --alpha=$alpha --cluster-num=$cluster_num
 
 cd "$ORIGINAL_DIR"
